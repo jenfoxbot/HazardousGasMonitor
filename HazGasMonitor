@@ -1,0 +1,284 @@
+// This #include statement was automatically added by the Particle IDE.
+//This library is used to push data to the data.sparkfun.com server.
+#include "SparkFunPhant/SparkFunPhant.h"
+#include "math.h" 
+
+//This code was written by Jennifer Fox <jenfoxbot@gmail.com>
+/*
+ * ----------------------------------------------------------------------------
+ * "THE Coffee-WARE LICENSE" (Revision 42):
+ * <jenfoxbot@gmail.com>  wrote this file.  As long as you retain this notice you
+ * can do whatever you want with this stuff. If we meet some day, and you think
+ * this stuff is worth it, you can buy me a coffee in return.
+ * ----------------------------------------------------------------------------
+ */
+
+//Variables to push data to data.sparkfun.com host -- Change publicKey[] and privateKey[]
+const char server[] = "data.sparkfun.com"; // Phant destination server
+const char publicKey[] = "xRxXWGDJvds80V39m5V8"; // Phant public key
+const char privateKey[] = "ZaNlvRPYz4fNZkDagekN"; // Phant private key
+
+Phant phant(server, publicKey, privateKey); // Create a Phant object
+
+const unsigned long postingRate = 20000; //Post rate to data.sparkfun.com (time in milliseconds)
+unsigned long lastPost = millis(); //Keeps track of posting rate
+
+
+//Define analog pins on Photon to use for sensors
+const int LPG = A0;
+const int NG = A1;
+const int CO = A2;
+
+//Define digital pins on Photon to use for LEDs,  buzzer, and MQ7 (CO sensor) heater
+const int LPGled = D0;
+const int NGled = D1;
+const int COled = D2;
+const int buzzer = D3;
+const int CORelayPin = D6;
+const int COVoltPin = D7;
+
+//Set up raw signal and PPM variables for each gas sensor
+int LPGRaw;
+int NGRaw;
+int CORaw;
+
+int LPGppm;
+int NGppm;
+int COppm;
+
+//Set safety threshold levels for each  hazardous gas
+const int  LPGthresh = 1000;
+const int NGthresh = 1000;
+const int COthresh = 50;
+//Set LED flash rates
+int LPGledFlash;
+int NGledFlash;
+int COledFlash;
+
+//Set variables CO sensor (MQ7) voltage cycle
+unsigned long startMillis;        
+unsigned long switchTimeMillis;
+const int CO_5V_Interval = 60000; //60s for 5V interval
+const int CO_1_5V_Interval = 90000; //90s for 1.5V interval
+bool heaterInHighPhase;
+
+void setup() {
+    Serial.begin(9600);
+    
+    //Initialize LED and buzzer output pins
+    pinMode(LPGled, OUTPUT);
+    pinMode(NGled, OUTPUT);
+    pinMode(COled, OUTPUT);
+    pinMode(buzzer, OUTPUT);
+    
+    //Initialize CO sensor heater pins
+    pinMode(CORelayPin, OUTPUT);
+    pinMode(COVoltPin, OUTPUT);
+
+    //Set start time (for CO sensor heater voltage)
+    startMillis = millis();
+    turnHeaterHigh();
+}
+
+void loop() {
+    //Cycle CO sensor (MQ7) heater voltage
+    
+    if(heaterInHighPhase){
+    // 5V phase - check to switch
+        if(millis() > switchTimeMillis) {
+        turnHeaterLow();
+        }
+    }
+    else {
+    // 1.4V phase - check to switch
+        if(millis() > switchTimeMillis) {
+        turnHeaterHigh();
+        }
+    }
+    
+    
+    //Read in analog value from each gas sensor
+    LPGRaw = analogRead(LPG); 
+    NGRaw = analogRead(NG);
+    CORaw = measureCOSensor();
+
+    //Caclulate the PPM of each gas sensor using the funtions defined below            
+    LPGppm = LPG_ppm(LPGRaw); 
+    NGppm = NG_ppm(NGRaw); 
+    COppm = CO_ppm(CORaw);
+    
+    //Serial monitor print for debugging and checking data (Feel free to leave in or comment out)
+    Serial.println(CORaw);
+    Serial.println(COppm);
+    
+    delay(1000);
+        
+    //Check gas sensor measurements against safety thresholds
+    checkThreshold(LPGppm, NGppm, COppm);
+
+    //Wait to post until ~ 20s has lapsed
+    if (lastPost + postingRate < millis()) {  
+        Serial.println("Reading!");
+                
+        postToPhant(LPGppm, NGppm, COppm, 'PPM'); //Post gas sensor readings and unit (PPM) to your data stream at data.sparkfun.com
+                
+        lastPost = millis();
+    }
+       
+}
+
+//Functions to calculate PPM from Photon analog reading
+//Each equation is determined by visually picking points, plotting PPM v. V_RL, then fitting a trendline to the curve (exponential)
+int LPG_ppm(double rawValue){
+    
+    double ppm = 26.572*exp(1.2894*(rawValue*3.3/4095)); //Multiply raw analog value by 3.3/4095 to convert to a voltage
+    return ppm;
+}
+
+//Function to calculate NG PPM
+int NG_ppm(double rawValue){
+    
+    double ppm = 10.938*exp(1.7742*(rawValue*3.3/4095)); 
+    return ppm;
+}
+
+//Function to calculate CO PPM
+int CO_ppm(double rawValue){
+    
+    double ppm = 3.027*exp(1.0698*(rawValue*3.3/4095));
+    return ppm;
+}
+
+
+//Function to check PPM reading with maximum safe PPM threshold
+void checkThreshold(int lpgppm, int ngppm, int coppm){
+    int led1;
+    int led2;
+    int led3;
+    
+   if (lpgppm >= LPGthresh){
+        digitalWrite(LPGled, HIGH);
+        led1 = TRUE;
+    } 
+    else{
+        digitalWrite(LPGled, LOW);
+        led1 = FALSE;
+    }
+    
+    if (ngppm >= NGthresh){
+        digitalWrite(D1, HIGH);
+        led2 = TRUE;
+    } 
+    else{
+        digitalWrite(NGled, LOW);
+        led2 = FALSE;
+    }
+      
+    if (coppm >= COthresh){
+        digitalWrite(D2, HIGH);
+        led3 = TRUE;
+    } 
+      else{
+        digitalWrite(COled, LOW);
+        led3 = FALSE;
+    }
+    
+    if(led1 | led2 | led3){
+        digitalWrite(buzzer, HIGH);
+    }
+    
+    else{digitalWrite(buzzer, LOW);}
+
+
+}
+
+//Functions to switch heater voltage on MQ7 (CO) sensor
+void turnHeaterHigh(){
+  // 5v phase
+  digitalWrite(COVoltPin, LOW);
+  digitalWrite(CORelayPin, HIGH);
+  
+  heaterInHighPhase = true;
+  switchTimeMillis = millis() + CO_5V_Interval;
+}
+
+void turnHeaterLow(){
+  // 1.4v phase
+  digitalWrite(COVoltPin, HIGH);
+  digitalWrite(CORelayPin, LOW);
+  
+  heaterInHighPhase = false;
+  switchTimeMillis = millis() + CO_1_5V_Interval;
+}
+
+//Function to read CO sensor voltage (just before switching to 1.5V)
+int measureCOSensor(){
+  unsigned int gasLevel = analogRead(CO);
+  unsigned int time = (millis() - startMillis) / 1000;
+  
+  return gasLevel;
+}
+
+
+
+//Functino to post data to data.sparkfun.com host
+//Many thanks to Jim Lindblom <jim@sparkfun.com> for the sample code and Phant library.
+int postToPhant(int lpg, int ng, int co, char unit){
+    
+    phant.add("lpg", lpg); //Data stream field name "sensorvalue1"
+    phant.add("ng", ng); //Data stream field name "sensorvalue2"
+    phant.add("co", co); //Data stream field name "sensorvalue3"
+   phant.add("unit", unit); //Data stream field name "unit"
+    
+    TCPClient client;
+    char response[512];
+    int i = 0;
+    int retVal = 0;
+    
+    if (client.connect(server, 80)) // Connect to the server
+    {
+		// Post message to indicate connect success
+        Serial.println("Posting!"); 
+		
+		// phant.post() will return a string formatted as an HTTP POST.
+		// It'll include all of the field/data values we added before.
+		// Use client.print() to send that string to the server.
+        client.print(phant.post());
+        delay(1000);
+		// Now we'll do some simple checking to see what (if any) response
+		// the server gives us.
+        while (client.available())
+        {
+            char c = client.read();
+            Serial.print(c);	// Print the response for debugging help.
+            if (i < 512)
+                response[i++] = c; // Add character to response string
+        }
+		// Search the response string for "200 OK", if that's found the post
+		// succeeded.
+        if (strstr(response, "200 OK"))
+        {
+            Serial.println("Post success!");
+            retVal = 1;
+        }
+        else if (strstr(response, "400 Bad Request"))
+        {	// "400 Bad Request" means the Phant POST was formatted incorrectly.
+			// This most commonly ocurrs because a field is either missing,
+			// duplicated, or misspelled.
+            Serial.println("Bad request");
+            retVal = -1;
+        }
+        else
+        {
+			// Otherwise we got a response we weren't looking for.
+            retVal = -2;
+        }
+    }
+    else
+    {	// If the connection failed, print a message:
+        Serial.println("connection failed");
+        retVal = -3;
+    }
+    client.stop();	// Close the connection to server.
+    return retVal;	// Return error (or success) code.
+}
