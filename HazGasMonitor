@@ -15,8 +15,8 @@
 
 //Variables to push data to data.sparkfun.com host -- Change publicKey[] and privateKey[]
 const char server[] = "data.sparkfun.com"; // Phant destination server
-const char publicKey[] = "xRxXWGDJvds80V39m5V8"; // Phant public key
-const char privateKey[] = "ZaNlvRPYz4fNZkDagekN"; // Phant private key
+const char publicKey[] = "DJWLQboLz4U3j2YDbDxd"; // Phant public key
+const char privateKey[] = "P4lA8EwABrhjY0Me5eyp"; // Phant private key
 
 Phant phant(server, publicKey, privateKey); // Create a Phant object
 
@@ -50,12 +50,9 @@ int COppm;
 const int  LPGthresh = 1000;
 const int NGthresh = 1000;
 const int COthresh = 50;
-//Set LED flash rates
-int LPGledFlash;
-int NGledFlash;
-int COledFlash;
 
-//Set variables CO sensor (MQ7) voltage cycle
+
+//Set variables for CO sensor (MQ7) voltage cycle
 unsigned long startMillis;        
 unsigned long switchTimeMillis;
 const int CO_5V_Interval = 60000; //60s for 5V interval
@@ -97,7 +94,7 @@ void loop() {
     }
     
     
-    //Read in analog value from each gas sensor
+    //Read in analog value from each gas sensor -- use function defined below to measure CO sensor at end of voltage cycle
     LPGRaw = analogRead(LPG); 
     NGRaw = analogRead(NG);
     CORaw = measureCOSensor();
@@ -107,10 +104,9 @@ void loop() {
     NGppm = NG_ppm(NGRaw); 
     COppm = CO_ppm(CORaw);
     
-    //Serial monitor print for debugging and checking data (Feel free to leave in or comment out)
-    Serial.println(CORaw);
-    Serial.println(COppm);
-    
+    //Serial monitor print for debugging and checking data 
+    Serial.println(NGRaw);
+    Serial.println(NGppm);
     delay(1000);
         
     //Check gas sensor measurements against safety thresholds
@@ -120,7 +116,7 @@ void loop() {
     if (lastPost + postingRate < millis()) {  
         Serial.println("Reading!");
                 
-        postToPhant(LPGppm, NGppm, COppm, 'PPM'); //Post gas sensor readings and unit (PPM) to your data stream at data.sparkfun.com
+        postToPhant(LPGppm, NGppm, COppm); //Post gas sensor readings and unit (PPM) to your data stream at data.sparkfun.com
                 
         lastPost = millis();
     }
@@ -129,20 +125,21 @@ void loop() {
 
 //Functions to calculate PPM from Photon analog reading
 //Each equation is determined by visually picking points, plotting PPM v. V_RL, then fitting a trendline to the curve (exponential)
+//Calculate LPG PPM
 int LPG_ppm(double rawValue){
     
     double ppm = 26.572*exp(1.2894*(rawValue*3.3/4095)); //Multiply raw analog value by 3.3/4095 to convert to a voltage
     return ppm;
 }
 
-//Function to calculate NG PPM
+//Calculate NG PPM
 int NG_ppm(double rawValue){
     
     double ppm = 10.938*exp(1.7742*(rawValue*3.3/4095)); 
     return ppm;
 }
 
-//Function to calculate CO PPM
+//Calculate CO PPM
 int CO_ppm(double rawValue){
     
     double ppm = 3.027*exp(1.0698*(rawValue*3.3/4095));
@@ -151,12 +148,13 @@ int CO_ppm(double rawValue){
 
 
 //Function to check PPM reading with maximum safe PPM threshold
+//Include a margin of error (currently 10%)
 void checkThreshold(int lpgppm, int ngppm, int coppm){
     int led1;
     int led2;
     int led3;
-    
-   if (lpgppm >= LPGthresh){
+        
+    if (lpgppm >= LPGthresh*0.9){
         digitalWrite(LPGled, HIGH);
         led1 = TRUE;
     } 
@@ -165,7 +163,7 @@ void checkThreshold(int lpgppm, int ngppm, int coppm){
         led1 = FALSE;
     }
     
-    if (ngppm >= NGthresh){
+    if (ngppm >= NGthresh*0.9){
         digitalWrite(D1, HIGH);
         led2 = TRUE;
     } 
@@ -174,7 +172,7 @@ void checkThreshold(int lpgppm, int ngppm, int coppm){
         led2 = FALSE;
     }
       
-    if (coppm >= COthresh){
+    if (coppm >= COthresh*0.9){
         digitalWrite(D2, HIGH);
         led3 = TRUE;
     } 
@@ -215,21 +213,21 @@ void turnHeaterLow(){
 int measureCOSensor(){
   unsigned int gasLevel = analogRead(CO);
   unsigned int time = (millis() - startMillis) / 1000;
+  delay(time);
   
   return gasLevel;
 }
 
 
 
-//Functino to post data to data.sparkfun.com host
+//Function to post data to data.sparkfun.com host
 //Many thanks to Jim Lindblom <jim@sparkfun.com> for the sample code and Phant library.
-int postToPhant(int lpg, int ng, int co, char unit){
+int postToPhant(int lpg, int ng, int co){
     
     phant.add("lpg", lpg); //Data stream field name "sensorvalue1"
     phant.add("ng", ng); //Data stream field name "sensorvalue2"
     phant.add("co", co); //Data stream field name "sensorvalue3"
-   phant.add("unit", unit); //Data stream field name "unit"
-    
+
     TCPClient client;
     char response[512];
     int i = 0;
