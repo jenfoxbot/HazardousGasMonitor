@@ -15,8 +15,8 @@
 
 //Variables to push data to data.sparkfun.com host -- Change publicKey[] and privateKey[]
 const char server[] = "data.sparkfun.com"; // Phant destination server
-const char publicKey[] = "DJWLQboLz4U3j2YDbDxd"; // Phant public key
-const char privateKey[] = "P4lA8EwABrhjY0Me5eyp"; // Phant private key
+const char publicKey[] = "INSERT_PUBLIC_KEY_HERE"; // Phant public key
+const char privateKey[] = "INSERT_PRIVATE_KEY_HERE"; // Phant private key
 
 Phant phant(server, publicKey, privateKey); // Create a Phant object
 
